@@ -33,7 +33,7 @@
     clippy::cast_possible_wrap,
     reason = "usize -> i32 for level arithmetic — bounded by MAX_CELL_LEVEL"
 )]
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::s2::coords::{Level, MAX_CELL_LEVEL};
 use crate::s2::{Cell, CellId, CellUnion, Point, Region};
@@ -127,8 +127,7 @@ impl RegionCoverer {
         let mut c = Coverer::new(self);
         c.interior_covering = false;
         c.covering_internal(region);
-        let mut cu = c.result;
-        cu.normalize();
+        let mut cu = c.result.into_cell_union();
         if self.min_level > 0 || self.level_mod > 1 {
             cu = cu.denormalize(self.min_level, self.level_mod);
         }
@@ -141,8 +140,7 @@ impl RegionCoverer {
         let mut c = Coverer::new(self);
         c.interior_covering = true;
         c.covering_internal(region);
-        let mut cu = c.result;
-        cu.normalize();
+        let mut cu = c.result.into_cell_union();
         if self.min_level > 0 || self.level_mod > 1 {
             cu = cu.denormalize(self.min_level, self.level_mod);
         }
@@ -154,9 +152,7 @@ impl RegionCoverer {
         let mut c = Coverer::new(self);
         c.interior_covering = false;
         c.covering_internal(region);
-        let mut cu = c.result;
-        cu.normalize();
-        cu
+        c.result.into_cell_union()
     }
 
     /// Returns a fast (but less tight) covering.
@@ -439,6 +435,58 @@ impl Ord for Candidate {
     }
 }
 
+/// The cells a covering has accepted, kept as an unsorted list.
+///
+/// The covering budget counts the cells of the *normalized* union: four
+/// accepted siblings count as their one parent. Normalizing on every append
+/// costs a sort per cell, so instead this tracks the normalized size
+/// incrementally and normalizes the list once, at the end.
+///
+/// Accepted cells never overlap: each comes from a distinct branch of the
+/// candidate tree, and is accepted once.
+#[derive(Debug, Default)]
+struct CoveringResult {
+    ids: Vec<CellId>,
+    /// Number of cells in the normalized union of `ids`.
+    normalized_len: usize,
+    /// For each cell with some but not all of its children in the normalized
+    /// union, the number of those children.
+    child_counts: HashMap<CellId, u8>,
+}
+
+impl CoveringResult {
+    /// Returns the number of cells in the normalized union.
+    fn len(&self) -> usize {
+        self.normalized_len
+    }
+
+    /// Adds `id`, which must not overlap a cell already added.
+    fn push(&mut self, id: CellId) {
+        self.ids.push(id);
+        self.normalized_len += 1;
+        // Merge complete sibling groups into their parent, as normalizing does.
+        let mut id = id;
+        while !id.is_face() {
+            let parent = id.parent();
+            let count = self.child_counts.entry(parent).or_insert(0);
+            *count += 1;
+            if *count < 4 {
+                break;
+            }
+            self.child_counts.remove(&parent);
+            self.normalized_len -= 3;
+            id = parent;
+        }
+    }
+
+    /// Returns the normalized union of the added cells.
+    fn into_cell_union(self) -> CellUnion {
+        let union = CellUnion::from_cell_ids(self.ids);
+        debug_assert_eq!(union.len(), self.normalized_len);
+        union
+    }
+}
+
 /// Internal state for the covering algorithm.
 struct Coverer {
     min_level: Level,
@@ -446,7 +494,7 @@ struct Coverer {
     level_mod: u8,
     max_cells: usize,
     interior_covering: bool,
-    result: CellUnion,
+    result: CoveringResult,
     pq: BinaryHeap<Candidate>,
 }
 
@@ -458,7 +506,7 @@ impl Coverer {
             level_mod: rc.level_mod.clamp(1, 3),
             max_cells: rc.max_cells.max(1),
             interior_covering: false,
-            result: CellUnion::from_cell_ids(vec![]),
+            result: CoveringResult::default(),
             pq: BinaryHeap::new(),
         }
     }
@@ -547,13 +595,7 @@ impl Coverer {
         };
 
         if cand.terminal {
-            self.result = CellUnion::from_cell_ids(
-                self.result
-                    .iter()
-                    .copied()
-                    .chain(std::iter::once(cand.cell.id()))
-                    .collect(),
-            );
+            self.result.push(cand.cell.id());
             return;
         }
 
@@ -703,6 +745,10 @@ impl Coverer {
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "region_coverer_tests.rs"]
+mod region_coverer_tests;
 
 #[cfg(test)]
 mod tests {
