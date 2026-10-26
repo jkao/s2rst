@@ -564,12 +564,13 @@ impl Coverer {
         let num_levels = num_levels - 1;
         let mut num_terminals = 0;
 
-        let id = cell.id();
-        let mut child_id = id.child_begin();
-        let end = id.child_end();
+        // Candidates are never leaf cells: a candidate is expanded only while
+        // its level plus `level_mod` stays within `max_level`.
+        let Some(children) = cell.children() else {
+            unreachable!("only non-leaf candidates can be expanded");
+        };
 
-        while child_id != end {
-            let child_cell = Cell::from(child_id);
+        for child_cell in children {
             if num_levels > 0 {
                 if region.intersects_cell(&child_cell) {
                     num_terminals += self.expand_children(cand, child_cell, num_levels, region);
@@ -582,7 +583,6 @@ impl Coverer {
                     num_terminals += 1;
                 }
             }
-            child_id = child_id.next();
         }
 
         num_terminals
