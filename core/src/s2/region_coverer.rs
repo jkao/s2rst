@@ -404,33 +404,45 @@ impl RegionCoverer {
 
 // ─── Internal Algorithm ─────────────────────────────────────────────────
 
-/// A candidate cell for the covering algorithm.
+/// A cell that intersects the region, considered for the covering.
+#[derive(Clone, Copy)]
 struct Candidate {
     cell: Cell,
+    /// Whether the cell goes into the result as-is, without subdividing.
     terminal: bool,
-    num_children: usize,
-    children: Vec<Candidate>,
-    priority: i64,
 }
 
-impl PartialEq for Candidate {
+/// A non-terminal candidate in the priority queue, with its children already
+/// computed. The children are stored in `Coverer::children`, at
+/// `children_start..children_start + num_children`; keeping them out of the
+/// entry keeps the entry small and cheap to move within the heap.
+struct QueueEntry {
+    priority: i64,
+    id: CellId,
+    children_start: usize,
+    num_children: usize,
+}
+
+impl PartialEq for QueueEntry {
     fn eq(&self, other: &Self) -> bool {
         self.priority == other.priority
     }
 }
 
-impl Eq for Candidate {}
+impl Eq for QueueEntry {}
 
-impl PartialOrd for Candidate {
+impl PartialOrd for QueueEntry {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Candidate {
+impl Ord for QueueEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Higher priority first (max-heap). We negate the priority in computation
-        // so that larger cells and fewer children come first.
+        // so that larger cells and fewer children come first. Only the priority
+        // is compared, so the heap breaks ties exactly as it would for any other
+        // entry layout.
         self.priority.cmp(&other.priority)
     }
 }
@@ -495,7 +507,12 @@ struct Coverer {
     max_cells: usize,
     interior_covering: bool,
     result: CoveringResult,
-    pq: BinaryHeap<Candidate>,
+    pq: BinaryHeap<QueueEntry>,
+    /// The children of every candidate that entered the queue. Each
+    /// candidate's children are contiguous. Queued ranges remain allocated
+    /// until this covering finishes; all-terminal ranges can be truncated
+    /// before the candidate enters the queue.
+    children: Vec<Candidate>,
 }
 
 impl Coverer {
@@ -508,6 +525,7 @@ impl Coverer {
             interior_covering: false,
             result: CoveringResult::default(),
             pq: BinaryHeap::new(),
+            children: Vec::new(),
         }
     }
 
@@ -530,9 +548,6 @@ impl Coverer {
         let mut cand = Candidate {
             cell,
             terminal: false,
-            num_children: 0,
-            children: Vec::new(),
-            priority: 0,
         };
 
         if level >= self.min_level {
@@ -552,15 +567,9 @@ impl Coverer {
         Some(cand)
     }
 
-    /// Expands the children of a candidate recursively.
-    /// Returns the number of terminal children found.
-    fn expand_children(
-        &self,
-        cand: &mut Candidate,
-        cell: Cell,
-        num_levels: u8,
-        region: &dyn Region,
-    ) -> usize {
+    /// Appends the candidates `num_levels` levels below `cell` to
+    /// `self.children`. Returns the number of them that are terminal.
+    fn expand_children(&mut self, cell: Cell, num_levels: u8, region: &dyn Region) -> usize {
         let num_levels = num_levels - 1;
         let mut num_terminals = 0;
 
@@ -573,15 +582,13 @@ impl Coverer {
         for child_cell in children {
             if num_levels > 0 {
                 if region.intersects_cell(&child_cell) {
-                    num_terminals += self.expand_children(cand, child_cell, num_levels, region);
+                    num_terminals += self.expand_children(child_cell, num_levels, region);
                 }
             } else if let Some(child) = self.new_candidate(child_cell, region) {
-                let is_terminal = child.terminal;
-                cand.children.push(child);
-                cand.num_children += 1;
-                if is_terminal {
+                if child.terminal {
                     num_terminals += 1;
                 }
+                self.children.push(child);
             }
         }
 
@@ -589,11 +596,7 @@ impl Coverer {
     }
 
     /// Adds a candidate to the result or queue.
-    fn add_candidate(&mut self, cand: Option<Candidate>, region: &dyn Region) {
-        let Some(mut cand) = cand else {
-            return;
-        };
-
+    fn add_candidate(&mut self, cand: Candidate, region: &dyn Region) {
         if cand.terminal {
             self.result.push(cand.cell.id());
             return;
@@ -606,11 +609,12 @@ impl Coverer {
             self.level_mod
         };
 
-        let cell = cand.cell;
-        let num_terminals = self.expand_children(&mut cand, cell, num_levels, region);
+        let children_start = self.children.len();
+        let num_terminals = self.expand_children(cand.cell, num_levels, region);
+        let num_children = self.children.len() - children_start;
         let max_children_shift = 2 * u32::from(self.level_mod);
 
-        if cand.num_children == 0 {
+        if num_children == 0 {
             return;
         }
 
@@ -618,17 +622,22 @@ impl Coverer {
             && num_terminals == (1usize << max_children_shift)
             && cand.cell.level() >= self.min_level
         {
-            // All children are terminal — use parent instead.
-            cand.terminal = true;
-            cand.children.clear();
-            self.add_candidate(Some(cand), region);
+            // All children are terminal — use parent instead. The children
+            // are the last ones added, so their slots can be reclaimed.
+            self.children.truncate(children_start);
+            self.result.push(cand.cell.id());
         } else {
             // Calculate priority and add children to heap.
             let level = i64::from(cand.cell.level().as_u8());
-            cand.priority = -(((level << max_children_shift) + cand.num_children as i64)
+            let priority = -(((level << max_children_shift) + num_children as i64)
                 << max_children_shift)
                 - num_terminals as i64;
-            self.pq.push(cand);
+            self.pq.push(QueueEntry {
+                priority,
+                id: cand.cell.id(),
+                children_start,
+                num_children,
+            });
         }
     }
 
@@ -636,34 +645,29 @@ impl Coverer {
     fn covering_internal(&mut self, region: &dyn Region) {
         self.initial_candidates(region);
 
-        while let Some(cand) = self.pq.pop() {
+        while let Some(entry) = self.pq.pop() {
             if self.interior_covering && self.result.len() >= self.max_cells {
                 break;
             }
 
-            let level = cand.cell.level();
+            let level = entry.id.level();
             let should_expand = self.interior_covering
                 || level < self.min_level
-                || cand.num_children == 1
-                || self.result.len() + self.pq.len() + cand.num_children <= self.max_cells;
+                || entry.num_children == 1
+                || self.result.len() + self.pq.len() + entry.num_children <= self.max_cells;
 
             if should_expand {
-                for child in cand.children {
+                for child_index in entry.children_start..entry.children_start + entry.num_children {
                     if !self.interior_covering || self.result.len() < self.max_cells {
-                        self.add_candidate(Some(child), region);
+                        // Expanding a child appends to `self.children`, so
+                        // copy it out rather than borrowing.
+                        let child = self.children[child_index];
+                        self.add_candidate(child, region);
                     }
                 }
             } else {
                 // Use this cell as-is.
-                let mut terminal = Candidate {
-                    cell: cand.cell,
-                    terminal: true,
-                    num_children: 0,
-                    children: Vec::new(),
-                    priority: 0,
-                };
-                terminal.terminal = true;
-                self.add_candidate(Some(terminal), region);
+                self.result.push(entry.id);
             }
         }
     }
@@ -677,13 +681,13 @@ impl Coverer {
             max_cells: self.max_cells.min(4),
         };
         let cells = temp.fast_covering(region);
-        let mut adjusted: Vec<CellId> = cells.iter().copied().collect();
+        let mut adjusted: Vec<CellId> = cells.into_iter().collect();
         self.adjust_cell_levels(&mut adjusted);
 
         for id in adjusted {
-            let cell = Cell::from(id);
-            let cand = self.new_candidate(cell, region);
-            self.add_candidate(cand, region);
+            if let Some(cand) = self.new_candidate(Cell::from(id), region) {
+                self.add_candidate(cand, region);
+            }
         }
     }
 
