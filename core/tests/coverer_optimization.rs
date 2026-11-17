@@ -38,7 +38,9 @@ use s2rst::s1::Angle;
 use s2rst::s2::polyline::Polyline;
 use s2rst::s2::region_coverer::RegionCoverer;
 use s2rst::s2::shape_index_region::ShapeIndexRegion;
-use s2rst::s2::{Cap, Cell, CellId, CellUnion, LatLng, Loop, Point, Polygon, Rect, Region};
+use s2rst::s2::{
+    Cap, Cell, CellId, CellUnion, LatLng, Loop, Point, Polygon, Rect, Region, RegionCellRelation,
+};
 
 const MAX_LEVEL: u8 = 30;
 
@@ -82,6 +84,9 @@ impl Region for IndexedPolygon {
     }
     fn intersects_cell(&self, cell: &Cell) -> bool {
         self.region().intersects_cell(cell)
+    }
+    fn cell_relation(&self, cell: &Cell) -> RegionCellRelation {
+        self.region().cell_relation(cell)
     }
     fn contains_point(&self, p: &Point) -> bool {
         Region::contains_point(&self.0, p)

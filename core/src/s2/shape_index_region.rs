@@ -337,11 +337,21 @@ impl Region for ShapeIndexRegion<'_> {
             };
         }
 
+        let center = it.center();
         let mut relation = RegionCellRelation::Disjoint;
         for clipped in &index_cell.shapes {
+            // Once a shape intersects the cell, only polygons can change the result.
+            if relation == RegionCellRelation::Intersects
+                && self
+                    .index
+                    .shape(clipped.shape_id)
+                    .is_none_or(|shape| shape.dimension() != Dimension::Polygon)
+            {
+                continue;
+            }
             if Self::any_edge_intersects(self.index, clipped, cell) {
                 relation = RegionCellRelation::Intersects;
-            } else if Self::clipped_contains(self.index, clipped, it.center(), cell.center()) {
+            } else if Self::clipped_contains(self.index, clipped, center, cell.center()) {
                 if self
                     .index
                     .shape(clipped.shape_id)

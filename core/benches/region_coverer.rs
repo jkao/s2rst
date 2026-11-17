@@ -10,6 +10,10 @@
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
+use s2rst::s2::polyline::Polyline;
+use s2rst::s2::shape_index::ShapeIndex;
+use s2rst::s2::shape_index_region::ShapeIndexRegion;
+
 use s2rst::s1;
 use s2rst::s2::region_coverer::RegionCoverer;
 use s2rst::s2::{Cap, Cell, CellId, CellUnion, LatLng, Loop};
@@ -165,9 +169,68 @@ library_benchmark_group!(
     benchmarks = bench_mixed_exterior_rect, bench_mixed_interior_cap
 );
 
+fn polygon_index() -> ShapeIndex {
+    let center = LatLng::from_degrees(40.0, -74.0).to_point();
+    let mut index = ShapeIndex::new();
+    index.add(Box::new(Loop::make_regular(
+        center,
+        s1::Angle::from_degrees(2.0),
+        256,
+    )));
+    index.build();
+    index
+}
+
+fn overlapping_polyline_index() -> ShapeIndex {
+    let point = |lat, lng| LatLng::from_degrees(lat, lng).to_point();
+    let mut index = ShapeIndex::new();
+    for i in 0..32 {
+        let offset = (f64::from(i) / 32.0 - 0.5) * 0.02;
+        index.add(Box::new(Polyline::new(vec![
+            point(-5.0, -3.0 + offset),
+            point(0.25, 0.25 + offset),
+            point(5.0, 3.0 - offset),
+        ])));
+    }
+    index.build();
+    index
+}
+
+#[library_benchmark(setup = polygon_index)]
+fn bench_indexed_exterior_polygon(index: ShapeIndex) -> (ShapeIndex, CellUnion) {
+    let region = ShapeIndexRegion::new(&index);
+    let coverer = RegionCoverer::new().max_level(18).max_cells(32);
+    let cells = coverer.covering(&region);
+    (index, cells)
+}
+
+#[library_benchmark(setup = polygon_index)]
+fn bench_indexed_interior_polygon(index: ShapeIndex) -> (ShapeIndex, CellUnion) {
+    let region = ShapeIndexRegion::new(&index);
+    let coverer = RegionCoverer::new().max_level(18).max_cells(32);
+    let cells = coverer.interior_covering(&region);
+    (index, cells)
+}
+
+#[library_benchmark(setup = overlapping_polyline_index)]
+fn bench_indexed_exterior_overlapping_polylines(index: ShapeIndex) -> (ShapeIndex, CellUnion) {
+    let region = ShapeIndexRegion::new(&index);
+    let coverer = RegionCoverer::new().max_level(14).max_cells(128);
+    let cells = coverer.covering(&region);
+    (index, cells)
+}
+
+library_benchmark_group!(
+    name = indexed_covering;
+    benchmarks = bench_indexed_exterior_polygon,
+        bench_indexed_interior_polygon,
+        bench_indexed_exterior_overlapping_polylines
+);
+
 main!(
     library_benchmark_groups = region_coverer_benchmarks,
     covering_cell_union,
     covering_loop_scaling,
-    mixed_covering
+    mixed_covering,
+    indexed_covering
 );
