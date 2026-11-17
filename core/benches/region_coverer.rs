@@ -46,6 +46,17 @@ fn bench_covering_loop() -> CellUnion {
 }
 
 #[library_benchmark]
+fn bench_fixed_level_exterior_cap() -> CellUnion {
+    let center = LatLng::from_degrees(40.0, -74.0).to_point();
+    let cap = Cap::from_center_angle(center, s1::Angle::from_degrees(1.0));
+    let coverer = RegionCoverer::new()
+        .min_level(14)
+        .max_level(14)
+        .max_cells(256);
+    black_box(coverer.covering(black_box(&cap)))
+}
+
+#[library_benchmark]
 fn bench_covering_cap_fine() -> CellUnion {
     // A tiny cap that requires deep covering.
     let center = LatLng::from_degrees(47.6, -122.3).to_point();
@@ -126,7 +137,8 @@ library_benchmark_group!(
         bench_covering_cap,
         bench_covering_cell,
         bench_covering_loop,
-        bench_covering_cap_fine
+        bench_covering_cap_fine,
+        bench_fixed_level_exterior_cap
 );
 
 library_benchmark_group!(

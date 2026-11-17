@@ -411,3 +411,19 @@ fn test_cell_children_match_cells_from_child_ids() {
         }
     }
 }
+
+#[test]
+fn fixed_level_exterior_emits_sorted_descendants_across_faces() {
+    let region = CellUnion::from_cell_ids(vec![CellId::from_face(4), CellId::from_face(1)]);
+    let level = Level::new(3);
+    let expected = region.denormalize(level, 1);
+    for modulo in 1..=3 {
+        let coverer = RegionCoverer::new()
+            .min_level(level)
+            .max_level(level)
+            .level_mod(modulo)
+            .max_cells(1);
+        assert_eq!(coverer.covering(&region), expected);
+        assert_eq!(coverer.cell_union(&region), region);
+    }
+}

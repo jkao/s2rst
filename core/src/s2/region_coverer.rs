@@ -125,6 +125,9 @@ impl RegionCoverer {
     pub fn covering(&self, region: &dyn Region) -> CellUnion {
         debug_assert!(self.min_level <= self.max_level);
         let mut c = Coverer::new(self);
+        if self.min_level == self.max_level {
+            return c.fixed_level_covering(region);
+        }
         c.interior_covering = false;
         c.covering_internal(region);
         let mut cu = c.result.into_cell_union();
@@ -672,8 +675,30 @@ impl Coverer {
         }
     }
 
-    /// Creates initial candidates from the region's bounding cap.
-    fn initial_candidates(&mut self, region: &dyn Region) {
+    /// Visits fixed-level exterior cells in Hilbert order. Every intersecting
+    /// branch must reach the target level, irrespective of the cell budget.
+    fn fixed_level_covering(&self, region: &dyn Region) -> CellUnion {
+        fn visit(cell: Cell, level: Level, region: &dyn Region, ids: &mut Vec<CellId>) {
+            if region.intersects_cell(&cell) {
+                if cell.level() == level {
+                    ids.push(cell.id());
+                } else if let Some(children) = cell.children() {
+                    for child in children {
+                        visit(child, level, region, ids);
+                    }
+                }
+            }
+        }
+
+        let mut ids = Vec::new();
+        for id in self.initial_cell_ids(region) {
+            visit(Cell::from(id), self.min_level, region, &mut ids);
+        }
+        CellUnion::from_verbatim(ids)
+    }
+
+    /// Returns sorted, disjoint starting cells at allowed levels.
+    fn initial_cell_ids(&self, region: &dyn Region) -> Vec<CellId> {
         let temp = RegionCoverer {
             min_level: Level::MIN,
             max_level: self.max_level,
@@ -684,7 +709,11 @@ impl Coverer {
         let mut adjusted: Vec<CellId> = cells.into_iter().collect();
         self.adjust_cell_levels(&mut adjusted);
 
-        for id in adjusted {
+        adjusted
+    }
+
+    fn initial_candidates(&mut self, region: &dyn Region) {
+        for id in self.initial_cell_ids(region) {
             if let Some(cand) = self.new_candidate(Cell::from(id), region) {
                 self.add_candidate(cand, region);
             }
