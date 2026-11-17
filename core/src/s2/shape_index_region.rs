@@ -337,7 +337,7 @@ impl Region for ShapeIndexRegion<'_> {
             };
         }
 
-        let center = it.center();
+        let mut centers = None;
         let mut relation = RegionCellRelation::Disjoint;
         for clipped in &index_cell.shapes {
             // Once a shape intersects the cell, only polygons can change the result.
@@ -351,7 +351,12 @@ impl Region for ShapeIndexRegion<'_> {
             }
             if Self::any_edge_intersects(self.index, clipped, cell) {
                 relation = RegionCellRelation::Intersects;
-            } else if Self::clipped_contains(self.index, clipped, center, cell.center()) {
+                continue;
+            }
+
+            let (index_center, target_center) =
+                *centers.get_or_insert_with(|| (it.center(), cell.center()));
+            if Self::clipped_contains(self.index, clipped, index_center, target_center) {
                 if self
                     .index
                     .shape(clipped.shape_id)
