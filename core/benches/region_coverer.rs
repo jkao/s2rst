@@ -12,7 +12,7 @@ use std::hint::black_box;
 
 use s2rst::s1;
 use s2rst::s2::region_coverer::RegionCoverer;
-use s2rst::s2::{Cap, Cell, CellId, CellUnion, LatLng, Loop};
+use s2rst::s2::{Cap, Cell, CellId, CellUnion, LatLng, Loop, Polygon};
 
 #[library_benchmark]
 fn bench_covering_cap() -> CellUnion {
@@ -54,6 +54,26 @@ fn bench_fixed_level_exterior_cap() -> CellUnion {
         .max_level(14)
         .max_cells(256);
     black_box(coverer.covering(black_box(&cap)))
+}
+
+fn setup_fixed_level_polygon() -> Polygon {
+    let center = LatLng::from_degrees(40.0, -74.0).to_point();
+    Polygon::from_loops(vec![Loop::make_regular(
+        center,
+        s1::Angle::from_degrees(1.0),
+        32,
+    )])
+}
+
+#[library_benchmark]
+#[bench::prepared(setup = setup_fixed_level_polygon)]
+fn bench_fixed_level_exterior_polygon(polygon: Polygon) -> CellUnion {
+    let coverer = RegionCoverer::new()
+        .min_level(12)
+        .max_level(12)
+        .level_mod(3)
+        .max_cells(16);
+    black_box(coverer.covering(black_box(&polygon)))
 }
 
 #[library_benchmark]
@@ -138,7 +158,8 @@ library_benchmark_group!(
         bench_covering_cell,
         bench_covering_loop,
         bench_covering_cap_fine,
-        bench_fixed_level_exterior_cap
+        bench_fixed_level_exterior_cap,
+        bench_fixed_level_exterior_polygon
 );
 
 library_benchmark_group!(

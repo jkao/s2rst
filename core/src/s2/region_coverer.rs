@@ -125,7 +125,11 @@ impl RegionCoverer {
     pub fn covering(&self, region: &dyn Region) -> CellUnion {
         debug_assert!(self.min_level <= self.max_level);
         let mut c = Coverer::new(self);
-        if self.min_level == self.max_level {
+        // Keep the general path's handling of options set without the builder.
+        if self.min_level == self.max_level
+            && self.max_level <= Level::MAX
+            && (1..=3).contains(&self.level_mod)
+        {
             return c.fixed_level_covering(region);
         }
         c.interior_covering = false;
@@ -692,9 +696,12 @@ impl Coverer {
 
         let mut ids = Vec::new();
         for id in self.initial_cell_ids(region) {
+            debug_assert!(id.level() <= self.min_level);
             visit(Cell::from(id), self.min_level, region, &mut ids);
         }
-        CellUnion::from_verbatim(ids)
+        let covering = CellUnion::from_verbatim(ids);
+        debug_assert!(covering.is_valid());
+        covering
     }
 
     /// Returns sorted, disjoint starting cells at allowed levels.

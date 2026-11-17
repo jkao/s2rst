@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use super::*;
 use crate::s1::Angle;
 use crate::s2::polyline::Polyline;
-use crate::s2::{Cap, LatLng, Loop, Rect};
+use crate::s2::{Cap, LatLng, Loop, Polygon, Rect};
 
 /// `SplitMix64`: a small deterministic generator, so the golden cases below do
 /// not depend on the version of an external RNG crate.
@@ -426,4 +426,55 @@ fn fixed_level_exterior_emits_sorted_descendants_across_faces() {
         assert_eq!(coverer.covering(&region), expected);
         assert_eq!(coverer.cell_union(&region), region);
     }
+}
+
+#[test]
+fn fixed_level_exterior_matches_heap_path_for_pruned_regions() {
+    let center = LatLng::from_degrees(40.0, -74.0).to_point();
+    let cap = Cap::from_center_angle(center, Angle::from_degrees(1.4));
+    let polygon = Polygon::from_loops(vec![Loop::make_regular(
+        center,
+        Angle::from_degrees(1.4),
+        7,
+    )]);
+    let level = Level::new(9);
+    let regions: [&dyn Region; 2] = [&cap, &polygon];
+    for modulo in 2..=3 {
+        let coverer = RegionCoverer::new()
+            .min_level(level)
+            .max_level(level)
+            .level_mod(modulo)
+            .max_cells(1);
+        for region in regions {
+            let seed_descendants: usize = Coverer::new(&coverer)
+                .initial_cell_ids(region)
+                .into_iter()
+                .map(|id| 1 << (2 * (level - id.level())))
+                .sum();
+            let expected = coverer.cell_union(region).denormalize(level, modulo);
+            assert!(!expected.is_empty(), "fixture must intersect cells");
+            assert!(
+                expected.len() < seed_descendants,
+                "fixture must prune cells"
+            );
+            assert_eq!(
+                coverer.covering(region),
+                expected,
+                "{region:?}, modulo {modulo}"
+            );
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "(1..=3).contains(&level_mod)")]
+fn fixed_level_exterior_preserves_raw_level_mod_validation() {
+    let coverer = RegionCoverer {
+        min_level: Level::new(1),
+        max_level: Level::new(1),
+        level_mod: 0,
+        ..RegionCoverer::new()
+    };
+    drop(coverer.covering(&Cap::empty()));
 }
