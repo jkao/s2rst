@@ -22,7 +22,7 @@ use crate::s2::coords::Level;
 use crate::s2::edge_clipping::{self, FACE_CLIP_ERROR_UV_COORD, INTERSECTS_RECT_ERROR_UV_DIST};
 use crate::s2::shape::{Dimension, ShapeId};
 use crate::s2::shape_index::{CellRelation, ClippedShape, ShapeIndex};
-use crate::s2::{Cap, Cell, CellId, CellUnion, Point, Rect, Region};
+use crate::s2::{Cap, Cell, CellId, CellUnion, Point, Rect, Region, RegionCellRelation};
 
 /// A [`ShapeIndex`] wrapped to implement the [`Region`] trait.
 ///
@@ -309,6 +309,52 @@ impl Region for ShapeIndexRegion<'_> {
         false
     }
 
+    fn cell_relation(&self, cell: &Cell) -> RegionCellRelation {
+        let mut it = self.index.iter();
+        match it.locate_cell_id(cell.id()) {
+            CellRelation::Disjoint => return RegionCellRelation::Disjoint,
+            CellRelation::Subdivided => return RegionCellRelation::Intersects,
+            CellRelation::Indexed => {}
+        }
+
+        let exact = it.cell_id() == cell.id();
+        let Some(index_cell) = it.index_cell() else {
+            return if exact {
+                RegionCellRelation::Intersects
+            } else {
+                RegionCellRelation::Disjoint
+            };
+        };
+        if exact {
+            return if index_cell
+                .shapes
+                .iter()
+                .any(|s| s.num_edges() == 0 && s.contains_center)
+            {
+                RegionCellRelation::Contains
+            } else {
+                RegionCellRelation::Intersects
+            };
+        }
+
+        let mut relation = RegionCellRelation::Disjoint;
+        for clipped in &index_cell.shapes {
+            if Self::any_edge_intersects(self.index, clipped, cell) {
+                relation = RegionCellRelation::Intersects;
+            } else if Self::clipped_contains(self.index, clipped, it.center(), cell.center()) {
+                if self
+                    .index
+                    .shape(clipped.shape_id)
+                    .is_some_and(|s| s.dimension() == Dimension::Polygon)
+                {
+                    return RegionCellRelation::Contains;
+                }
+                relation = RegionCellRelation::Intersects;
+            }
+        }
+        relation
+    }
+
     fn contains_point(&self, p: &Point) -> bool {
         let mut q = ContainsPointQuery::new(self.index, VertexModel::SemiOpen);
         q.contains(*p)
@@ -316,6 +362,10 @@ impl Region for ShapeIndexRegion<'_> {
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "shape_index_region_tests.rs"]
+mod shape_index_region_tests;
 
 #[cfg(test)]
 mod tests {

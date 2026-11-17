@@ -199,5 +199,5 @@ pub use latlng::LatLng;
 pub use point::{Point, ortho, rotate};
 pub use polygon::Polygon;
 pub use rect::{Rect, RectVertex};
-pub use region::Region;
+pub use region::{Region, RegionCellRelation};
 pub use s2loop::Loop;

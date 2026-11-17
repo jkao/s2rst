@@ -36,7 +36,7 @@
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::s2::coords::{Level, MAX_CELL_LEVEL};
-use crate::s2::{Cell, CellId, CellUnion, Point, Region};
+use crate::s2::{Cell, CellId, CellUnion, Point, Region, RegionCellRelation};
 
 // ─── Public Configuration ───────────────────────────────────────────────
 
@@ -540,31 +540,22 @@ impl Coverer {
 
     /// Creates a new candidate from a cell if it intersects the region.
     fn new_candidate(&self, cell: Cell, region: &dyn Region) -> Option<Candidate> {
-        if !region.intersects_cell(&cell) {
-            return None;
-        }
-
         let level = cell.level();
-        let mut cand = Candidate {
-            cell,
-            terminal: false,
-        };
-
-        if level >= self.min_level {
-            if self.interior_covering {
-                if region.contains_cell(&cell) {
-                    cand.terminal = true;
-                } else if level.as_u8().saturating_add(self.level_mod) > self.max_level.as_u8() {
-                    return None;
-                }
-            } else if level.as_u8().saturating_add(self.level_mod) > self.max_level.as_u8()
-                || region.contains_cell(&cell)
-            {
-                cand.terminal = true;
+        let at_limit = level.as_u8().saturating_add(self.level_mod) > self.max_level.as_u8();
+        let terminal = if level < self.min_level || (at_limit && !self.interior_covering) {
+            if !region.intersects_cell(&cell) {
+                return None;
             }
-        }
-
-        Some(cand)
+            level >= self.min_level
+        } else {
+            match region.cell_relation(&cell) {
+                RegionCellRelation::Disjoint => return None,
+                RegionCellRelation::Contains => true,
+                RegionCellRelation::Intersects if at_limit => return None,
+                RegionCellRelation::Intersects => false,
+            }
+        };
+        Some(Candidate { cell, terminal })
     }
 
     /// Appends the candidates `num_levels` levels below `cell` to

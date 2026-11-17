@@ -143,8 +143,31 @@ library_benchmark_group!(
         bench_covering_loop_256_vertices
 );
 
+#[library_benchmark]
+fn bench_mixed_exterior_rect() -> CellUnion {
+    let rect = s2rst::s2::Rect::empty()
+        .add_point(LatLng::from_degrees(30.0, -80.0))
+        .add_point(LatLng::from_degrees(50.0, -60.0));
+    let coverer = RegionCoverer::new().max_level(16).max_cells(256);
+    black_box(coverer.covering(black_box(&rect)))
+}
+
+#[library_benchmark]
+fn bench_mixed_interior_cap() -> CellUnion {
+    let center = LatLng::from_degrees(40.0, -74.0).to_point();
+    let cap = Cap::from_center_angle(center, s1::Angle::from_degrees(10.0));
+    let coverer = RegionCoverer::new().max_level(16).max_cells(256);
+    black_box(coverer.interior_covering(black_box(&cap)))
+}
+
+library_benchmark_group!(
+    name = mixed_covering;
+    benchmarks = bench_mixed_exterior_rect, bench_mixed_interior_cap
+);
+
 main!(
     library_benchmark_groups = region_coverer_benchmarks,
     covering_cell_union,
-    covering_loop_scaling
+    covering_loop_scaling,
+    mixed_covering
 );

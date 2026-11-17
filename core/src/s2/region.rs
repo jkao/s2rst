@@ -12,6 +12,17 @@
 
 use crate::s2::{Cap, Cell, CellId, Point, Rect};
 
+/// Result of the region's intersection and containment tests for a cell.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionCellRelation {
+    /// The intersection test rejected the cell.
+    Disjoint,
+    /// The intersection test accepted the cell and containment was not established.
+    Intersects,
+    /// The intersection and containment tests both accepted the cell.
+    Contains,
+}
+
 /// A geometric region on the unit sphere.
 ///
 /// All types implementing `Region` must provide bounding methods
@@ -55,6 +66,18 @@ pub trait Region: std::fmt::Debug {
     /// Reports whether this region intersects the given cell.
     fn intersects_cell(&self, cell: &Cell) -> bool;
 
+    /// Classifies a cell using the same conservative predicates as
+    /// `intersects_cell` followed by `contains_cell`.
+    fn cell_relation(&self, cell: &Cell) -> RegionCellRelation {
+        if !self.intersects_cell(cell) {
+            RegionCellRelation::Disjoint
+        } else if self.contains_cell(cell) {
+            RegionCellRelation::Contains
+        } else {
+            RegionCellRelation::Intersects
+        }
+    }
+
     /// Reports whether this region contains the given point.
     fn contains_point(&self, p: &Point) -> bool;
 }
@@ -86,6 +109,17 @@ impl Region for Cap {
         self.intersects(cell.cap_bound())
     }
 
+    fn cell_relation(&self, cell: &Cell) -> RegionCellRelation {
+        let bound = cell.cap_bound();
+        if !self.intersects(bound) {
+            RegionCellRelation::Disjoint
+        } else if self.contains(bound) {
+            RegionCellRelation::Contains
+        } else {
+            RegionCellRelation::Intersects
+        }
+    }
+
     fn contains_point(&self, p: &Point) -> bool {
         Cap::contains_point(*self, *p)
     }
@@ -113,6 +147,17 @@ impl Region for Rect {
     fn intersects_cell(&self, cell: &Cell) -> bool {
         // Conservative: check if rect intersects cell's rect bound.
         self.intersects(cell.rect_bound())
+    }
+
+    fn cell_relation(&self, cell: &Cell) -> RegionCellRelation {
+        let bound = cell.rect_bound();
+        if !self.intersects(bound) {
+            RegionCellRelation::Disjoint
+        } else if self.contains(bound) {
+            RegionCellRelation::Contains
+        } else {
+            RegionCellRelation::Intersects
+        }
     }
 
     fn contains_point(&self, p: &Point) -> bool {
